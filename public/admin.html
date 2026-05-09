@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>BLAFFA REJET — Administration</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">BR</div>
+        <span>BLAFFA REJET</span>
+      </div>
+      <div class="sidebar-section">Administration</div>
+      <a class="active" data-section="overview">📊 Vue globale</a>
+      <a data-section="users">👥 Utilisateurs</a>
+      <a data-section="rejections">📋 Tous les rejets</a>
+      <a data-section="myDashboard">⚙️ Mon espace</a>
+      <div class="sidebar-bottom">
+        <div class="sidebar-user" id="userInfo">—</div>
+        <a id="logoutBtn">🚪 Déconnexion</a>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="page-header">
+        <h2 id="sectionTitle">Vue globale</h2>
+      </div>
+
+      <!-- OVERVIEW -->
+      <div id="section-overview">
+        <div class="card-grid">
+          <div class="stat-card">
+            <div class="label">Total utilisateurs</div>
+            <div class="value" id="statTotalUsers">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Robots actifs</div>
+            <div class="value" id="statActiveRobots">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Total rejets</div>
+            <div class="value" id="statTotalRejections">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Rejets 24h</div>
+            <div class="value" id="stat24h">0</div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>📋 Derniers rejets (toutes équipes)</h3>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Utilisateur</th>
+                  <th>N° demande</th>
+                  <th>Identifiant</th>
+                  <th>Numéro</th>
+                  <th>Montant</th>
+                  <th>Banque</th>
+                  <th>Processing Time</th>
+                </tr>
+              </thead>
+              <tbody id="recentRejectionsTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- USERS -->
+      <div id="section-users" class="hidden">
+        <div class="card">
+          <h3>👥 Créer un utilisateur</h3>
+          <div id="createAlert" class="hidden"></div>
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 12px;">
+            <div class="form-group" style="margin:0">
+              <label>Identifiant</label>
+              <input type="text" id="newUsername" />
+            </div>
+            <div class="form-group" style="margin:0">
+              <label>Mot de passe (6+ car.)</label>
+              <input type="password" id="newPassword" />
+            </div>
+            <div class="form-group" style="margin:0">
+              <label>&nbsp;</label>
+              <label style="display:flex; align-items:center; gap:6px; padding-top:8px;">
+                <input type="checkbox" id="newIsAdmin" /> Compte administrateur
+              </label>
+            </div>
+            <div class="form-group" style="margin:0">
+              <label>&nbsp;</label>
+              <button id="btnCreateUser" class="btn btn-primary btn-block">Créer</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>👥 Liste des utilisateurs</h3>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Identifiant</th>
+                  <th>Rôle</th>
+                  <th>Statut</th>
+                  <th>Robot</th>
+                  <th>Seuil</th>
+                  <th>Total rejets</th>
+                  <th>Dernier run</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="usersTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ALL REJECTIONS -->
+      <div id="section-rejections" class="hidden">
+        <div class="card">
+          <div class="flex-between mb-2">
+            <h3 style="margin:0">📋 Historique global</h3>
+            <button id="btnRefreshAll" class="btn btn-secondary btn-sm">↻ Actualiser</button>
+          </div>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Utilisateur</th>
+                  <th>N° demande</th>
+                  <th>Identifiant</th>
+                  <th>Numéro</th>
+                  <th>Montant</th>
+                  <th>Banque</th>
+                  <th>Processing Time</th>
+                  <th>Seuil</th>
+                </tr>
+              </thead>
+              <tbody id="allRejectionsTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- MY DASHBOARD (admin a aussi son propre espace) -->
+      <div id="section-myDashboard" class="hidden">
+        <div class="card">
+          <h3>⚙️ Espace administrateur personnel</h3>
+          <p>Vous pouvez aussi utiliser le robot avec votre propre compte.</p>
+          <a href="/dashboard.html" class="btn btn-primary">Accéder à mon espace utilisateur</a>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/admin.js"></script>
+</body>
+</html>
