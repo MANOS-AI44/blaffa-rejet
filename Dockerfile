@@ -1,9 +1,8 @@
-# Image Node.js Bookworm + Chromium installe via npm
+# Image Node.js Bookworm + Chromium
 FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-# Dependances systeme pour Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     fonts-liberation \
@@ -23,18 +22,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 \
   && rm -rf /var/lib/apt/lists/*
 
-# Indique a Playwright d'utiliser le chromium systeme
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+ENV NODE_ENV=production
+ENV PORT=3000
 
 COPY package*.json ./
 RUN npm install --production
 
 COPY . .
 
-ENV NODE_ENV=production
-ENV PORT=3000
-
 EXPOSE 3000
 
-CMD ["sh", "-c", "node src/scripts/init-db.js && node src/server.js"]
+CMD ["sh", "-c", "echo '=== CONTAINER START ===' && node src/scripts/init-db.js && echo '=== INIT OK, STARTING SERVER ===' && exec node src/server.js"]
