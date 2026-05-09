@@ -1,4 +1,4 @@
-// Robot de rejet - avec desactivation auto-update et page-size 500
+// Robot de rejet v3 - clics Playwright + modal robuste + toggle auto-update fiable
 const { query } = require('../db');
 
 const BASE_URL = process.env.MANAGMENT_BASE_URL || 'https://managment.io';
@@ -71,61 +71,112 @@ async function runOneCycleForUser(userId) {
       return { error: 'auth' };
     }
 
-    // 1. Desactiver l'auto-update (toggle ON a cote de "Mise a jour auto")
-    await page.evaluate(() => {
-      const all = Array.from(document.querySelectorAll('*'));
-      for (const el of all) {
-        const txt = (el.textContent || '').trim();
-        // toggle ACTIF (ON) a proximite de label "Mise a jour auto"
-        if ((txt === 'ON' || txt === 'on') && el.children.length === 0) {
-          const parent = el.parentElement;
-          if (parent && (parent.textContent || '').includes('Mise')) {
-            el.click(); return;
+    // 1. Disable auto-update (Mise a jour auto: ON -> OFF)
+    const toggled = await page.evaluate(() => {
+      const labels = Array.from(document.querySelectorAll('*')).filter(el => {
+        const t = (el.textContent || '').trim().toLowerCase();
+        return t.includes('mise') && t.includes('jour') && t.length < 60 && el.children.length < 8;
+      });
+      for (const label of labels) {
+        const container = label.closest('div, td, label') || label.parentElement;
+        if (!container) continue;
+        const cb = container.querySelector('input[type="checkbox"]');
+        if (cb && cb.checked && cb.offsetParent !== null) { cb.click(); return 'checkbox'; }
+        const toggles = container.querySelectorAll('.switch, .toggle, [class*="switch"], [class*="toggle"]');
+        for (const t of toggles) {
+          if (t.offsetParent !== null) { t.click(); return 'toggle'; }
+        }
+        const allInner = container.querySelectorAll('*');
+        for (const b of allInner) {
+          const tt = (b.textContent || '').trim();
+          if ((tt === 'ON' || tt === 'on') && b.offsetParent !== null && b.children.length === 0) {
+            (b.parentElement || b).click();
+            return 'on-text';
           }
         }
       }
+      return null;
     });
+    if (toggled) await log(userId, 'INFO', 'Auto-update desactive (' + toggled + ')');
     await page.waitForTimeout(500);
 
-    // 2. Cliquer APPLIQUER
-    const apply = page.locator('button:has-text("APPLIQUER"), button:has-text("Appliquer")').first();
-    if (await apply.isVisible({ timeout: 3000 }).catch(() => false)) { await apply.click(); await page.waitForTimeout(3000); }
+    // 2. Click APPLIQUER
+    const applyBtn = page.locator('button:has-text("APPLIQUER"), a:has-text("APPLIQUER")').first();
+    if (await applyBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await applyBtn.click({ force: true });
+      await page.waitForTimeout(3500);
+    }
 
-    // 3. Changer page-size a 500
-    await page.evaluate(() => {
-      const candidates = Array.from(document.querySelectorAll('*')).filter(e => e.textContent.trim() === '100' && e.children.length <= 1 && e.offsetWidth < 200);
-      if (candidates[0]) candidates[0].click();
-    });
-    await page.waitForTimeout(800);
-    await page.evaluate(() => {
-      const opts = Array.from(document.querySelectorAll('*')).filter(e => e.textContent.trim() === '500' && e.children.length <= 1 && e.offsetWidth < 200);
-      if (opts[0]) opts[0].click();
-    });
-    await page.waitForTimeout(800);
-    if (await apply.isVisible({ timeout: 1500 }).catch(() => false)) { await apply.click(); await page.waitForTimeout(3000); }
+    // 3. Page-size to 500
+    let pageSizeChanged = false;
+    try {
+      const selects = page.locator('select');
+      const selectCount = await selects.count();
+      for (let i = 0; i < selectCount && !pageSizeChanged; i++) {
+        const opts = await selects.nth(i).locator('option').allTextContents();
+        if (opts.includes('500')) {
+          await selects.nth(i).selectOption('500');
+          pageSizeChanged = true;
+          await log(userId, 'INFO', 'Page-size 500 (select natif)');
+        }
+      }
+    } catch (e) {}
+    if (!pageSizeChanged) {
+      try {
+        const dd = await page.evaluate(() => {
+          const els = Array.from(document.querySelectorAll('div, span, button, a')).filter(e => {
+            return (e.textContent || '').trim() === '100' && e.children.length <= 1 && e.offsetParent !== null;
+          });
+          if (els.length) { els[els.length - 1].click(); return true; }
+          return false;
+        });
+        if (dd) {
+          await page.waitForTimeout(500);
+          const picked = await page.evaluate(() => {
+            const els = Array.from(document.querySelectorAll('div, span, li, a, option')).filter(e => {
+              return (e.textContent || '').trim() === '500' && e.children.length <= 1 && e.offsetParent !== null;
+            });
+            if (els.length) { els[els.length - 1].click(); return true; }
+            return false;
+          });
+          if (picked) { pageSizeChanged = true; await log(userId, 'INFO', 'Page-size 500 (dropdown)'); }
+        }
+      } catch (e) {}
+    }
+    await page.waitForTimeout(1000);
+    if (await applyBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await applyBtn.click({ force: true });
+      await page.waitForTimeout(3500);
+    }
 
-    // Boucle de rejet: parcourir toutes les rangees, rejeter celles > seuil de la plus ancienne
+    // 4. Rejection loop - utilise des CLICS PLAYWRIGHT (vraie souris) au lieu de JS click()
     const MAX = 500;
+    let consecutiveFailures = 0;
     for (let i = 0; i < MAX; i++) {
       const allRows = await page.evaluate(() => {
         const r = document.querySelectorAll('table tbody tr');
         if (!r.length) return [];
         return Array.from(r).map(row => {
           const c = row.querySelectorAll('td');
-          if (c.length < 7) return null;
+          if (c.length < 5) return null;
+          const hasReject = !!Array.from(row.querySelectorAll('a')).find(a => (a.textContent || '').trim() === 'Rejeter');
+          if (!hasReject) return null;
           return {
-            infos: (c.item(0) && c.item(0).innerText || '').trim(),
-            amount: (c.item(1) && c.item(1).innerText || '').trim(),
-            processingTime: (c.item(3) && c.item(3).innerText || '').trim(),
-            identifier: (c.item(5) && c.item(5).innerText || '').trim(),
-            bankName: (c.item(7) && c.item(7).innerText || '').trim(),
+            infos: (c.item(0) ? c.item(0).innerText : '').trim(),
+            amount: (c.item(1) ? c.item(1).innerText : '').trim(),
+            processingTime: (c.item(3) ? c.item(3).innerText : '').trim(),
+            identifier: c.item(5) ? c.item(5).innerText.trim() : '',
+            bankName: c.item(7) ? c.item(7).innerText.trim() : '',
           };
         }).filter(x => x);
       });
       if (!allRows.length) { await log(userId, 'INFO', 'Table vide.'); break; }
 
       const eligible = allRows.filter(r => processingTimeToMinutes(r.processingTime) > threshold);
-      if (!eligible.length) { await log(userId, 'INFO', 'Plus aucune > ' + threshold + ' min (parmi ' + allRows.length + ' rangees).'); break; }
+      if (!eligible.length) {
+        await log(userId, 'INFO', 'Plus aucune > ' + threshold + ' min (' + allRows.length + ' rangees vues).');
+        break;
+      }
       const target = eligible[eligible.length - 1];
       const targetIndex = allRows.indexOf(target);
 
@@ -134,48 +185,67 @@ async function runOneCycleForUser(userId) {
       const phoneMatch = target.infos.match(/(\d{8,15})/);
       const userPhone = phoneMatch ? phoneMatch[1] : '';
 
-      const result = await page.evaluate(async (idx) => {
-        const rs = document.querySelectorAll('table tbody tr');
-        const row = rs[idx];
-        if (!row) return { error: 'no row' };
-        const link = row.querySelectorAll('td')[4].querySelector('a');
-        if (!link) return { error: 'no link' };
-        link.scrollIntoView({ block: 'center' });
-        link.click();
-        for (let j = 0; j < 30; j++) {
-          const m = document.body.innerText.match(/N[\u00b0\u00bao]\s*(\d+)/);
-          if (m) return { requestNumber: m[1] };
-          await new Promise(r => setTimeout(r, 100));
-        }
-        return { error: 'modal not found' };
-      }, targetIndex);
-
-      if (result.error) {
-        await page.keyboard.press('Escape').catch(() => {});
-        await page.waitForTimeout(500); continue;
-      }
-
-      const filled = await page.evaluate(() => {
-        const input = document.querySelector('input[placeholder="Commentaire"]');
-        if (!input) return { error: 'no input' };
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        setter.call(input, 'AA');
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        for (const b of document.querySelectorAll('button')) {
-          if (b.innerText.trim() === 'OK' && b.offsetParent !== null) { b.click(); return { ok: true }; }
-        }
-        return { error: 'no OK btn' };
-      });
-      if (filled.error) { await page.keyboard.press('Escape').catch(() => {}); continue; }
-      await page.waitForTimeout(1500);
-
       try {
-        await query('INSERT INTO rejections (user_id, request_number, deposit_id, user_phone, user_identifier, amount, bank_name, processing_time, threshold_used, success) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE)',
-          [userId, result.requestNumber, target.identifier, userPhone, target.identifier, target.amount, target.bankName, target.processingTime, threshold]);
-      } catch (e) {}
-      rejectedCount++;
-      if (rejectedCount % 10 === 0) await log(userId, 'INFO', rejectedCount + ' rejets...');
+        // CLIC PLAYWRIGHT - critique pour declencher les handlers jQuery de managment.io
+        const rejectLink = page.locator('table tbody tr').nth(targetIndex).locator('a:has-text("Rejeter")').first();
+        await rejectLink.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+        await rejectLink.click({ force: true, timeout: 5000 });
+
+        // Attendre le modal (input commentaire)
+        await page.waitForSelector('input[placeholder="Commentaire"]', { state: 'visible', timeout: 8000 });
+
+        // Extraire le N de demande depuis le modal
+        const requestNumber = await page.evaluate(() => {
+          const text = document.body.innerText;
+          const m = text.match(/(?:N[Â°Âº]|No)\s*(\d{6,})/);
+          return m ? m[1] : '';
+        });
+
+        // Remplir "AA" via Playwright (tous les events)
+        await page.fill('input[placeholder="Commentaire"]', 'AA');
+        await page.waitForTimeout(200);
+
+        // Cliquer OK (bouton turquoise) via Playwright
+        let okClicked = false;
+        try {
+          await page.locator('button:has-text("OK"), a:has-text("OK")').filter({ hasText: /^OK$/i }).first().click({ force: true, timeout: 3000 });
+          okClicked = true;
+        } catch (e) {
+          okClicked = await page.evaluate(() => {
+            const btns = Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"]'));
+            for (const b of btns) {
+              const t = (b.textContent || b.value || '').trim();
+              if ((t === 'OK' || t === 'Ok') && b.offsetParent !== null) { b.click(); return true; }
+            }
+            return false;
+          });
+        }
+
+        if (!okClicked) {
+          await page.keyboard.press('Escape').catch(() => {});
+          await page.waitForTimeout(800);
+          consecutiveFailures++;
+          if (consecutiveFailures > 3) { await log(userId, 'ERROR', 'Bouton OK introuvable (3x)'); break; }
+          continue;
+        }
+
+        await page.waitForSelector('input[placeholder="Commentaire"]', { state: 'hidden', timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(1200);
+
+        consecutiveFailures = 0;
+        try {
+          await query('INSERT INTO rejections (user_id, request_number, deposit_id, user_phone, user_identifier, amount, bank_name, processing_time, threshold_used, success) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE)',
+            [userId, requestNumber, target.identifier, userPhone, target.identifier, target.amount, target.bankName, target.processingTime, threshold]);
+        } catch (e) {}
+        rejectedCount++;
+        if (rejectedCount === 1 || rejectedCount % 5 === 0) await log(userId, 'INFO', 'Rejete ' + rejectedCount + ' (N ' + requestNumber + ')');
+      } catch (clickErr) {
+        consecutiveFailures++;
+        await log(userId, 'WARN', 'Echec idx=' + targetIndex + ': ' + (clickErr.message || '').substring(0, 100));
+        await page.keyboard.press('Escape').catch(() => {});
+        await page.waitForTimeout(800);
+        if (consecutiveFailures > 5) { await log(userId, 'ERROR', 'Trop d echecs consecutifs, arret du cycle.'); break; }
+      }
     }
 
     await query('UPDATE user_settings SET last_status = $1, last_run_at = NOW() WHERE user_id = $2', ['OK: ' + rejectedCount + ' rejet(s)', userId]);
