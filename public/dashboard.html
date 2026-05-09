@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>BLAFFA REJET — Tableau de bord</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">BR</div>
+        <span>BLAFFA REJET</span>
+      </div>
+      <div class="sidebar-section">Navigation</div>
+      <a class="active" data-section="overview">📊 Vue d'ensemble</a>
+      <a data-section="config">🍪 Cookies & Seuil</a>
+      <a data-section="rejections">📋 Historique rejets</a>
+      <a data-section="logs">📜 Journal</a>
+      <a data-section="security">🔒 Mot de passe</a>
+      <div class="sidebar-bottom">
+        <div class="sidebar-user" id="userInfo">—</div>
+        <a id="logoutBtn">🚪 Déconnexion</a>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="page-header">
+        <h2 id="sectionTitle">Vue d'ensemble</h2>
+        <div id="robotStatusBadge"></div>
+      </div>
+
+      <!-- OVERVIEW -->
+      <div id="section-overview">
+        <div class="card-grid">
+          <div class="stat-card">
+            <div class="label">Total rejets</div>
+            <div class="value" id="statTotal">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Dernières 24h</div>
+            <div class="value" id="stat24h">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">7 derniers jours</div>
+            <div class="value" id="stat7d">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Seuil actif</div>
+            <div class="value" id="statThreshold">—</div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>État du robot</h3>
+          <div id="robotState" class="mb-2"></div>
+          <div class="flex gap-12">
+            <button id="btnStart" class="btn btn-success">▶️ Démarrer le robot</button>
+            <button id="btnStop" class="btn btn-danger">⏸ Arrêter le robot</button>
+          </div>
+          <div class="text-muted text-sm mt-3" id="lastRunInfo"></div>
+        </div>
+      </div>
+
+      <!-- CONFIG -->
+      <div id="section-config" class="hidden">
+        <div class="card">
+          <h3>🍪 Cookies managment.io</h3>
+          <p class="text-muted text-sm">
+            Connectez-vous à managment.io dans votre navigateur, ouvrez DevTools (F12) → onglet Application/Storage → Cookies → managment.io,
+            puis copiez le contenu au format JSON ou en chaîne <code>name=value; name2=value2</code> et collez-le ci-dessous.
+          </p>
+          <div id="cookieStatus" class="mb-2"></div>
+          <textarea id="cookiesInput" rows="6" placeholder='[{"name":"session","value":"..."}, ...]  ou  session=abc; csrf=def'></textarea>
+          <div class="flex gap-12 mt-3">
+            <button id="btnSaveCookies" class="btn btn-primary">💾 Enregistrer</button>
+            <button id="btnDeleteCookies" class="btn btn-danger">🗑 Supprimer</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>⏱ Seuil de rejet (Processing Time)</h3>
+          <p class="text-muted text-sm">
+            Le robot rejettera toute demande dont le temps de traitement est strictement supérieur au seuil choisi.
+            Commentaire envoyé : <strong>"AA"</strong>.
+          </p>
+          <div class="threshold-grid" id="thresholdGrid"></div>
+        </div>
+      </div>
+
+      <!-- REJECTIONS -->
+      <div id="section-rejections" class="hidden">
+        <div class="card">
+          <div class="flex-between mb-2">
+            <h3 style="margin:0">📋 Historique des rejets</h3>
+            <button id="btnRefreshRejections" class="btn btn-secondary btn-sm">↻ Actualiser</button>
+          </div>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date du rejet</th>
+                  <th>N° demande</th>
+                  <th>Identifiant utilisateur</th>
+                  <th>Numéro</th>
+                  <th>Montant</th>
+                  <th>Banque</th>
+                  <th>Processing Time</th>
+                  <th>Seuil</th>
+                </tr>
+              </thead>
+              <tbody id="rejectionsTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- LOGS -->
+      <div id="section-logs" class="hidden">
+        <div class="card">
+          <div class="flex-between mb-2">
+            <h3 style="margin:0">📜 Journal du robot</h3>
+            <button id="btnRefreshLogs" class="btn btn-secondary btn-sm">↻ Actualiser</button>
+          </div>
+          <div id="logsContainer" class="logs">Chargement…</div>
+        </div>
+      </div>
+
+      <!-- SECURITY -->
+      <div id="section-security" class="hidden">
+        <div class="card">
+          <h3>🔒 Changer le mot de passe</h3>
+          <div id="pwdAlert" class="hidden"></div>
+          <div class="form-group">
+            <label>Mot de passe actuel</label>
+            <input type="password" id="currentPwd" />
+          </div>
+          <div class="form-group">
+            <label>Nouveau mot de passe (6 caractères minimum)</label>
+            <input type="password" id="newPwd" />
+          </div>
+          <button id="btnChangePwd" class="btn btn-primary">Modifier</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/dashboard.js"></script>
+</body>
+</html>
