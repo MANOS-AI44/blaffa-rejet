@@ -1,4 +1,4 @@
-// Robot de rejet v3 - clics Playwright + modal robuste + toggle auto-update fiable
+// Robot de rejet v4 - mutex global Chromium + retry EAGAIN
 const { query } = require('../db');
 
 const BASE_URL = process.env.MANAGMENT_BASE_URL || 'https://managment.io';
@@ -6,6 +6,37 @@ const PENDING_URL = BASE_URL + '/fr/admin/report/pendingrequestrefill';
 const CHROMIUM_PATH = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || '/usr/bin/chromium';
 
 const runners = new Map();
+
+// MUTEX GLOBAL - un seul Chromium a la fois pour eviter EAGAIN/OOM
+let chromiumBusy = false;
+const chromiumQueue = [];
+function acquireChromium() {
+  return new Promise(resolve => {
+    if (!chromiumBusy) { chromiumBusy = true; resolve(); }
+    else chromiumQueue.push(resolve);
+  });
+}
+function releaseChromium() {
+  if (chromiumQueue.length > 0) { const next = chromiumQueue.shift(); next(); }
+  else chromiumBusy = false;
+}
+
+// Launch chromium avec retry sur EAGAIN/ENOMEM
+async function launchChromiumWithRetry(chromium, opts, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await chromium.launch(opts);
+    } catch (e) {
+      const msg = e.message || '';
+      if (i < maxRetries - 1 && (msg.includes('EAGAIN') || msg.includes('ENOMEM') || msg.includes('spawn'))) {
+        await new Promise(r => setTimeout(r, 5000 * (i + 1)));
+        if (global.gc) global.gc();
+        continue;
+      }
+      throw e;
+    }
+  }
+}
 
 async function log(userId, level, message) {
   console.log('[' + level + '][user:' + userId + '] ' + message);
@@ -53,10 +84,14 @@ async function runOneCycleForUser(userId) {
 
   await log(userId, 'INFO', 'Debut cycle (seuil=' + threshold + ' min)');
   let browser = null, rejectedCount = 0;
+  let chromiumAcquired = false;
   try {
-    browser = await chromium.launch({
+    // Attendre son tour pour lancer Chromium (mutex global)
+    await acquireChromium();
+    chromiumAcquired = true;
+    browser = await launchChromiumWithRetry(chromium, {
       headless: true, executablePath: CHROMIUM_PATH,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process', '--no-zygote'],
     });
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
     await ctx.addCookies(cookies);
@@ -257,6 +292,7 @@ async function runOneCycleForUser(userId) {
     return { error: err.message };
   } finally {
     if (browser) { try { await browser.close(); } catch (e) {} }
+    if (chromiumAcquired) releaseChromium();
   }
 }
 
@@ -285,8 +321,12 @@ async function bootstrap() {
   console.log('Bootstrap des robots actifs...');
   try {
     const r = await query('SELECT us.user_id FROM user_settings us JOIN users u ON u.id = us.user_id WHERE us.robot_active = TRUE AND u.is_active = TRUE');
-    for (const row of r.rows) startRobotForUser(row.user_id);
-    console.log(r.rows.length + ' robot(s) relance(s).');
+    // Espacer les demarrages de 5s pour ne pas saturer Chromium
+    for (let i = 0; i < r.rows.length; i++) {
+      const row = r.rows[i];
+      setTimeout(() => startRobotForUser(row.user_id), i * 5000);
+    }
+    console.log(r.rows.length + ' robot(s) seront relance(s) (5s d\'intervalle).');
   } catch (e) { console.error('Bootstrap:', e.message); }
 }
 
