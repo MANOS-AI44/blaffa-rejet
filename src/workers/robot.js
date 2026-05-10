@@ -91,7 +91,7 @@ async function runOneCycleForUser(userId) {
     chromiumAcquired = true;
     browser = await launchChromiumWithRetry(chromium, {
       headless: true, executablePath: CHROMIUM_PATH,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process', '--no-zygote'],
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     });
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
     await ctx.addCookies(cookies);
