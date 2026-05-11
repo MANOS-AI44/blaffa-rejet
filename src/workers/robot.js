@@ -298,8 +298,16 @@ async function runOneCycleForUser(userId) {
 
 async function userLoop(userId) {
   while (runners.has(userId) && runners.get(userId).active) {
-    try { await runOneCycleForUser(userId); } catch (e) { await log(userId, 'ERROR', e.message); }
-    await new Promise(r => setTimeout(r, 30000));
+    let result;
+    try { result = await runOneCycleForUser(userId); } catch (e) { await log(userId, 'ERROR', e.message); }
+    // Si aucune demande n'a ete trouvee/rejetee dans ce cycle,
+    // attendre 5 minutes avant de reessayer (au lieu de 30s).
+    const noDemandFound = result && typeof result.rejected === 'number' && result.rejected === 0;
+    const delayMs = noDemandFound ? 5 * 60 * 1000 : 30 * 1000;
+    if (noDemandFound) {
+      await log(userId, 'INFO', 'Aucune demande a rejeter, nouvelle verification dans 5 min.');
+    }
+    await new Promise(r => setTimeout(r, delayMs));
   }
   runners.delete(userId);
 }
