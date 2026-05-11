@@ -74,6 +74,19 @@
       <!-- PLATFORMS -->
       <div id="section-platforms" class="hidden">
         <div class="card">
+          <h3>🔄 Maintenance du serveur</h3>
+          <p class="text-muted text-sm">
+            En cas de saturation système (erreur <code>Cannot fork</code>, robot bloqué, mémoire pleine), redémarrez le serveur.
+            Railway relancera automatiquement le service en 30-60 secondes.
+          </p>
+          <div id="restartAlert" class="hidden"></div>
+          <div class="flex gap-12" style="flex-wrap:wrap">
+            <button id="btnRestartPlatforms" class="btn btn-secondary">♻️ Redémarrer les robots (soft)</button>
+            <button id="btnRestartServer" class="btn btn-warning">🔄 Redémarrer le serveur (full)</button>
+          </div>
+        </div>
+
+        <div class="card">
           <h3>🌐 Créer une plateforme</h3>
           <div id="createAlert" class="hidden"></div>
           <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 12px; align-items:end;">
