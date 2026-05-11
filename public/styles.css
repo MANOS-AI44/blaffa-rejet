@@ -351,3 +351,34 @@ table tr:hover { background: #f9fafb; }
 .mt-3 { margin-top: 12px; }
 .mb-2 { margin-bottom: 8px; }
 .hidden { display: none !important; }
+
+/* Select compact pour tableau */
+.select-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+  width: auto;
+  min-width: 80px;
+}
+
+/* Modals */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+.modal-card {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 100%;
+  max-width: 640px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+.modal-card h3 { font-size: 16px; }

@@ -15,9 +15,9 @@
       </div>
       <div class="sidebar-section">Administration</div>
       <a class="active" data-section="overview">📊 Vue globale</a>
-      <a data-section="users">👥 Utilisateurs</a>
+      <a data-section="platforms">🌐 Plateformes</a>
       <a data-section="rejections">📋 Tous les rejets</a>
-      <a data-section="myDashboard">⚙️ Mon espace</a>
+      <a data-section="security">🔒 Mot de passe</a>
       <div class="sidebar-bottom">
         <div class="sidebar-user" id="userInfo">—</div>
         <a id="logoutBtn">🚪 Déconnexion</a>
@@ -33,8 +33,8 @@
       <div id="section-overview">
         <div class="card-grid">
           <div class="stat-card">
-            <div class="label">Total utilisateurs</div>
-            <div class="value" id="statTotalUsers">0</div>
+            <div class="label">Total plateformes</div>
+            <div class="value" id="statTotalPlatforms">0</div>
           </div>
           <div class="stat-card">
             <div class="label">Robots actifs</div>
@@ -50,13 +50,13 @@
           </div>
         </div>
         <div class="card">
-          <h3>📋 Derniers rejets (toutes équipes)</h3>
+          <h3>📋 Derniers rejets (toutes plateformes)</h3>
           <div class="table-wrapper">
             <table>
               <thead>
                 <tr>
                   <th>Date</th>
-                  <th>Utilisateur</th>
+                  <th>Plateforme</th>
                   <th>N° demande</th>
                   <th>Identifiant</th>
                   <th>Numéro</th>
@@ -71,51 +71,81 @@
         </div>
       </div>
 
-      <!-- USERS -->
-      <div id="section-users" class="hidden">
+      <!-- PLATFORMS -->
+      <div id="section-platforms" class="hidden">
         <div class="card">
-          <h3>👥 Créer un utilisateur</h3>
+          <h3>🌐 Créer une plateforme</h3>
           <div id="createAlert" class="hidden"></div>
-          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 12px;">
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 12px; align-items:end;">
             <div class="form-group" style="margin:0">
-              <label>Identifiant</label>
-              <input type="text" id="newUsername" />
+              <label>Nom de la plateforme</label>
+              <input type="text" id="newPlatformName" placeholder="ex. Melbet CI 1" />
             </div>
             <div class="form-group" style="margin:0">
-              <label>Mot de passe (6+ car.)</label>
-              <input type="password" id="newPassword" />
+              <label>Seuil initial</label>
+              <select id="newPlatformThreshold">
+                <option value="10">10 min</option>
+                <option value="13">13 min</option>
+                <option value="30">30 min</option>
+                <option value="120" selected>2 h</option>
+                <option value="360">6 h</option>
+              </select>
             </div>
             <div class="form-group" style="margin:0">
-              <label>&nbsp;</label>
-              <label style="display:flex; align-items:center; gap:6px; padding-top:8px;">
-                <input type="checkbox" id="newIsAdmin" /> Compte administrateur
-              </label>
-            </div>
-            <div class="form-group" style="margin:0">
-              <label>&nbsp;</label>
-              <button id="btnCreateUser" class="btn btn-primary btn-block">Créer</button>
+              <button id="btnCreatePlatform" class="btn btn-primary btn-block">Créer</button>
             </div>
           </div>
         </div>
 
         <div class="card">
-          <h3>👥 Liste des utilisateurs</h3>
+          <h3>🌐 Liste des plateformes</h3>
           <div class="table-wrapper">
             <table>
               <thead>
                 <tr>
-                  <th>Identifiant</th>
-                  <th>Rôle</th>
-                  <th>Statut</th>
-                  <th>Robot</th>
+                  <th>Nom</th>
+                  <th>Cookies</th>
                   <th>Seuil</th>
+                  <th>Robot</th>
                   <th>Total rejets</th>
                   <th>Dernier run</th>
                   <th>Actions</th>
                 </tr>
               </thead>
-              <tbody id="usersTbody"></tbody>
+              <tbody id="platformsTbody"></tbody>
             </table>
+          </div>
+        </div>
+
+        <!-- Modal cookies -->
+        <div id="cookieModal" class="modal hidden">
+          <div class="modal-card">
+            <div class="flex-between mb-2">
+              <h3 style="margin:0">🍪 Cookies — <span id="cookieModalName">—</span></h3>
+              <a id="cookieModalClose" style="cursor:pointer">✕</a>
+            </div>
+            <p class="text-muted text-sm">
+              Connectez-vous à managment.io dans votre navigateur, ouvrez DevTools (F12) → Application → Cookies → managment.io,
+              puis copiez-collez ici (JSON ou <code>name=value; name2=value2</code>).
+            </p>
+            <div id="cookieModalAlert" class="hidden"></div>
+            <textarea id="cookieModalInput" rows="8" placeholder='[{"name":"PHPSESSID","value":"..."}, ...]'></textarea>
+            <div class="flex gap-12 mt-3">
+              <button id="cookieModalSave" class="btn btn-primary">💾 Enregistrer</button>
+              <button id="cookieModalDelete" class="btn btn-danger">🗑 Supprimer</button>
+              <button id="cookieModalCancel" class="btn btn-secondary">Annuler</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modal logs -->
+        <div id="logsModal" class="modal hidden">
+          <div class="modal-card">
+            <div class="flex-between mb-2">
+              <h3 style="margin:0">📜 Journal — <span id="logsModalName">—</span></h3>
+              <a id="logsModalClose" style="cursor:pointer">✕</a>
+            </div>
+            <div id="logsModalContainer" class="logs">Chargement…</div>
           </div>
         </div>
       </div>
@@ -132,7 +162,7 @@
               <thead>
                 <tr>
                   <th>Date</th>
-                  <th>Utilisateur</th>
+                  <th>Plateforme</th>
                   <th>N° demande</th>
                   <th>Identifiant</th>
                   <th>Numéro</th>
@@ -148,12 +178,20 @@
         </div>
       </div>
 
-      <!-- MY DASHBOARD (admin a aussi son propre espace) -->
-      <div id="section-myDashboard" class="hidden">
+      <!-- SECURITY -->
+      <div id="section-security" class="hidden">
         <div class="card">
-          <h3>⚙️ Espace administrateur personnel</h3>
-          <p>Vous pouvez aussi utiliser le robot avec votre propre compte.</p>
-          <a href="/dashboard.html" class="btn btn-primary">Accéder à mon espace utilisateur</a>
+          <h3>🔒 Changer le mot de passe admin</h3>
+          <div id="pwdAlert" class="hidden"></div>
+          <div class="form-group">
+            <label>Mot de passe actuel</label>
+            <input type="password" id="currentPwd" />
+          </div>
+          <div class="form-group">
+            <label>Nouveau mot de passe (6 caractères minimum)</label>
+            <input type="password" id="newPwd" />
+          </div>
+          <button id="btnChangePwd" class="btn btn-primary">Modifier</button>
         </div>
       </div>
     </main>
