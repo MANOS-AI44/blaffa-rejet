@@ -271,6 +271,36 @@ document.getElementById('btnCreatePlatform').addEventListener('click', async () 
 
 document.getElementById('btnRefreshAll').addEventListener('click', loadAllRejections);
 
+// ========== Maintenance ==========
+document.getElementById('btnRestartPlatforms').addEventListener('click', async () => {
+  const a = document.getElementById('restartAlert');
+  a.classList.add('hidden');
+  if (!confirm('Redémarrer les robots ?\nLes plateformes actives seront stop/start (10s).')) return;
+  try {
+    const r = await api('/admin/restart-platforms', { method: 'POST' });
+    a.className = 'alert alert-success';
+    a.textContent = `♻️ ${r.count} plateforme(s) en cours de redémarrage. Ça reprend dans ~10 secondes.`;
+    a.classList.remove('hidden');
+    setTimeout(loadPlatforms, 12000);
+  } catch (e) {
+    a.className = 'alert alert-error'; a.textContent = e.message; a.classList.remove('hidden');
+  }
+});
+
+document.getElementById('btnRestartServer').addEventListener('click', async () => {
+  const a = document.getElementById('restartAlert');
+  a.classList.add('hidden');
+  if (!confirm('Redémarrer COMPLÈTEMENT le serveur ?\nLe service sera indisponible 30-60 secondes.\nRailway relancera automatiquement.')) return;
+  try {
+    await api('/admin/restart', { method: 'POST' });
+    a.className = 'alert alert-info';
+    a.innerHTML = '🔄 <strong>Redémarrage en cours…</strong> Patientez 30 à 60 secondes puis rafraîchissez la page.';
+    a.classList.remove('hidden');
+  } catch (e) {
+    a.className = 'alert alert-error'; a.textContent = e.message; a.classList.remove('hidden');
+  }
+});
+
 // Mot de passe admin
 document.getElementById('btnChangePwd').addEventListener('click', async () => {
   const a = document.getElementById('pwdAlert');
