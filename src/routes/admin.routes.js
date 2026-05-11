@@ -1,76 +1,91 @@
+// Admin routes - gestion des plateformes managment.io
 const express = require('express');
 const router = express.Router();
 const { query } = require('../db');
-const { authenticate, requireAdmin, hashPassword } = require('../auth');
-const { stopRobotForUser } = require('../workers/robot');
+const { authenticate, requireAdmin } = require('../auth');
+const { startRobotForPlatform, stopRobotForPlatform, isRobotRunning } = require('../workers/robot');
 
 router.use(authenticate, requireAdmin);
 
-// GET /api/admin/users
-router.get('/users', async (req, res) => {
-  const r = await query(
-    `SELECT u.id, u.username, u.is_admin, u.is_active, u.created_at, u.last_login,
-            us.robot_active, us.threshold_minutes, us.last_run_at, us.last_status,
-            (SELECT COUNT(*) FROM rejections WHERE user_id = u.id) AS total_rejections
-     FROM users u
-     LEFT JOIN user_settings us ON us.user_id = u.id
-     ORDER BY u.created_at ASC`
-  );
-  res.json({ users: r.rows });
-});
+// Seuils autorises en minutes
+const ALLOWED_THRESHOLDS = [10, 13, 30, 120, 360];
 
-// POST /api/admin/users : créer
-router.post('/users', async (req, res) => {
+// ==================== PLATEFORMES ====================
+
+// GET /api/admin/platforms - liste avec stats
+router.get('/platforms', async (req, res) => {
   try {
-    const { username, password, is_admin } = req.body || {};
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Identifiant et mot de passe requis' });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Mot de passe trop court (6+ caractères)' });
-    }
-    const exists = await query('SELECT id FROM users WHERE username = $1', [username.trim()]);
-    if (exists.rows.length > 0) {
-      return res.status(409).json({ error: 'Identifiant déjà utilisé' });
-    }
-    const hash = await hashPassword(password);
-    const ins = await query(
-      'INSERT INTO users (username, password_hash, is_admin) VALUES ($1, $2, $3) RETURNING id, username, is_admin',
-      [username.trim(), hash, !!is_admin]
-    );
-    await query('INSERT INTO user_settings (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [ins.rows[0].id]);
-    res.json({ success: true, user: ins.rows[0] });
+    const r = await query(`
+      SELECT p.id, p.name, p.threshold_minutes, p.robot_active,
+             p.last_run_at, p.last_status, p.created_at,
+             p.cookies_json IS NOT NULL AND p.cookies_json <> '' AS has_cookies,
+             (SELECT COUNT(*) FROM rejections WHERE platform_id = p.id) AS total_rejections
+      FROM platforms p
+      ORDER BY p.created_at ASC
+    `);
+    const withRunning = r.rows.map(p => ({ ...p, robot_running: isRobotRunning(p.id) }));
+    res.json({ platforms: withRunning, allowed_thresholds: ALLOWED_THRESHOLDS });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-// PUT /api/admin/users/:id : activer/désactiver, reset password, promote
-router.put('/users/:id', async (req, res) => {
+// POST /api/admin/platforms - creer
+router.post('/platforms', async (req, res) => {
+  try {
+    const { name, threshold_minutes } = req.body || {};
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Nom de plateforme requis' });
+    const cleanName = name.trim();
+    const thr = parseInt(threshold_minutes, 10);
+    const finalThr = ALLOWED_THRESHOLDS.includes(thr) ? thr : 120;
+    const exists = await query('SELECT id FROM platforms WHERE name = $1', [cleanName]);
+    if (exists.rows.length > 0) return res.status(409).json({ error: 'Nom deja utilise' });
+    const ins = await query(
+      'INSERT INTO platforms (name, threshold_minutes) VALUES ($1, $2) RETURNING id, name, threshold_minutes',
+      [cleanName, finalThr]
+    );
+    res.json({ success: true, platform: ins.rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// PUT /api/admin/platforms/:id - renommer / changer seuil
+router.put('/platforms/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const { is_active, is_admin, new_password } = req.body || {};
-    const fields = [];
-    const vals = [];
-    let idx = 1;
-    if (typeof is_active === 'boolean') {
-      fields.push(`is_active = $${idx++}`);
-      vals.push(is_active);
-      if (!is_active) stopRobotForUser(id);
+    const { name, threshold_minutes } = req.body || {};
+    const fields = []; const vals = []; let idx = 1;
+    if (name && name.trim()) {
+      fields.push(`name = $${idx++}`); vals.push(name.trim());
     }
-    if (typeof is_admin === 'boolean') {
-      fields.push(`is_admin = $${idx++}`);
-      vals.push(is_admin);
-    }
-    if (new_password && new_password.length >= 6) {
-      const hash = await hashPassword(new_password);
-      fields.push(`password_hash = $${idx++}`);
-      vals.push(hash);
+    if (threshold_minutes !== undefined) {
+      const m = parseInt(threshold_minutes, 10);
+      if (!ALLOWED_THRESHOLDS.includes(m)) {
+        return res.status(400).json({ error: 'Seuil non autorise. Valeurs: ' + ALLOWED_THRESHOLDS.join(', ') });
+      }
+      fields.push(`threshold_minutes = $${idx++}`); vals.push(m);
     }
     if (fields.length === 0) return res.json({ success: true });
+    fields.push(`updated_at = NOW()`);
     vals.push(id);
-    await query(`UPDATE users SET ${fields.join(', ')} WHERE id = $${idx}`, vals);
+    await query(`UPDATE platforms SET ${fields.join(', ')} WHERE id = $${idx}`, vals);
+    res.json({ success: true });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Nom deja utilise' });
+    console.error(err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// DELETE /api/admin/platforms/:id
+router.delete('/platforms/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    stopRobotForPlatform(id);
+    await query('DELETE FROM platforms WHERE id = $1', [id]);
     res.json({ success: true });
   } catch (err) {
     console.error(err);
@@ -78,22 +93,109 @@ router.put('/users/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/admin/users/:id
-router.delete('/users/:id', async (req, res) => {
+// POST /api/admin/platforms/:id/cookies - injecter/maj cookies
+router.post('/platforms/:id/cookies', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { cookies } = req.body || {};
+    if (!cookies) return res.status(400).json({ error: 'Cookies requis' });
+    let parsed = cookies;
+    if (typeof cookies === 'string') {
+      try {
+        parsed = JSON.parse(cookies);
+      } catch (e) {
+        const parts = cookies.split(';').map((p) => {
+          const [k, ...v] = p.trim().split('=');
+          return { name: k.trim(), value: v.join('=').trim(), domain: '.managment.io', path: '/' };
+        }).filter((c) => c.name);
+        parsed = parts;
+      }
+    }
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return res.status(400).json({ error: 'Format cookies invalide. Attendu: tableau JSON ou "name=value; name2=value2"' });
+    }
+    await query(
+      'UPDATE platforms SET cookies_json = $1, updated_at = NOW() WHERE id = $2',
+      [JSON.stringify(parsed), id]
+    );
+    res.json({ success: true, count: parsed.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// DELETE /api/admin/platforms/:id/cookies
+router.delete('/platforms/:id/cookies', async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  if (id === req.user.id) return res.status(400).json({ error: 'Vous ne pouvez pas vous supprimer vous-même' });
-  stopRobotForUser(id);
-  await query('DELETE FROM users WHERE id = $1', [id]);
+  await query('UPDATE platforms SET cookies_json = NULL WHERE id = $1', [id]);
+  stopRobotForPlatform(id);
   res.json({ success: true });
 });
 
-// GET /api/admin/rejections : tous les rejets
+// POST /api/admin/platforms/:id/start
+router.post('/platforms/:id/start', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const s = await query('SELECT cookies_json FROM platforms WHERE id = $1', [id]);
+    if (s.rows.length === 0) return res.status(404).json({ error: 'Plateforme introuvable' });
+    if (!s.rows[0].cookies_json) {
+      return res.status(400).json({ error: 'Veuillez d\'abord injecter les cookies managment.io' });
+    }
+    await query('UPDATE platforms SET robot_active = TRUE, updated_at = NOW() WHERE id = $1', [id]);
+    startRobotForPlatform(id);
+    res.json({ success: true, running: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// POST /api/admin/platforms/:id/stop
+router.post('/platforms/:id/stop', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  await query('UPDATE platforms SET robot_active = FALSE WHERE id = $1', [id]);
+  stopRobotForPlatform(id);
+  res.json({ success: true, running: false });
+});
+
+// GET /api/admin/platforms/:id/logs - journal robot par plateforme
+router.get('/platforms/:id/logs', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const r = await query(
+    `SELECT level, message, created_at FROM robot_logs
+     WHERE platform_id = $1
+     ORDER BY created_at DESC
+     LIMIT 100`,
+    [id]
+  );
+  res.json({ logs: r.rows });
+});
+
+// GET /api/admin/platforms/:id/rejections - historique par plateforme
+router.get('/platforms/:id/rejections', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const limit = Math.min(parseInt(req.query.limit) || 200, 1000);
+  const r = await query(
+    `SELECT id, request_number, deposit_id, user_phone, user_identifier,
+            amount, bank_name, processing_time, threshold_used, rejected_at, success, error_msg
+     FROM rejections WHERE platform_id = $1
+     ORDER BY rejected_at DESC LIMIT $2`,
+    [id, limit]
+  );
+  res.json({ rejections: r.rows });
+});
+
+// ==================== AGREGATS ====================
+
+// GET /api/admin/rejections - tous les rejets toutes plateformes
 router.get('/rejections', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 200, 1000);
   const r = await query(
-    `SELECT r.*, u.username
+    `SELECT r.*, p.name AS platform_name
      FROM rejections r
-     JOIN users u ON u.id = r.user_id
+     LEFT JOIN platforms p ON p.id = r.platform_id
+     WHERE r.platform_id IS NOT NULL
      ORDER BY r.rejected_at DESC
      LIMIT $1`,
     [limit]
@@ -101,14 +203,14 @@ router.get('/rejections', async (req, res) => {
   res.json({ rejections: r.rows });
 });
 
-// GET /api/admin/stats : agrégats
+// GET /api/admin/stats
 router.get('/stats', async (req, res) => {
-  const totalUsers = (await query('SELECT COUNT(*) FROM users')).rows[0].count;
-  const activeRobots = (await query('SELECT COUNT(*) FROM user_settings WHERE robot_active = TRUE')).rows[0].count;
-  const totalRejections = (await query('SELECT COUNT(*) FROM rejections')).rows[0].count;
-  const today = (await query("SELECT COUNT(*) FROM rejections WHERE rejected_at > NOW() - INTERVAL '24 hours'")).rows[0].count;
+  const totalPlatforms = (await query('SELECT COUNT(*) FROM platforms')).rows[0].count;
+  const activeRobots = (await query('SELECT COUNT(*) FROM platforms WHERE robot_active = TRUE')).rows[0].count;
+  const totalRejections = (await query('SELECT COUNT(*) FROM rejections WHERE platform_id IS NOT NULL')).rows[0].count;
+  const today = (await query("SELECT COUNT(*) FROM rejections WHERE platform_id IS NOT NULL AND rejected_at > NOW() - INTERVAL '24 hours'")).rows[0].count;
   res.json({
-    totalUsers: parseInt(totalUsers),
+    totalPlatforms: parseInt(totalPlatforms),
     activeRobots: parseInt(activeRobots),
     totalRejections: parseInt(totalRejections),
     last24h: parseInt(today),
