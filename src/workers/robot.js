@@ -331,6 +331,19 @@ async function runOneCycleForPlatform(platformId) {
   }
 }
 
+// Detecte une erreur de saturation systeme (Chromium ne peut plus se lancer)
+function isResourceError(msg) {
+  if (!msg) return false;
+  const m = String(msg).toLowerCase();
+  return m.includes('cannot fork')
+      || m.includes('browser has been closed')
+      || m.includes('target page, context or browser has been closed')
+      || m.includes('eagain')
+      || m.includes('enomem')
+      || m.includes('spawn')
+      || m.includes('browsertype.launch');
+}
+
 async function platformLoop(platformId) {
   // Boucle ultra-resiliente: aucune exception ne peut sortir et tuer le runner silencieusement.
   while (runners.has(platformId) && runners.get(platformId).active) {
@@ -338,14 +351,25 @@ async function platformLoop(platformId) {
     try {
       result = await runOneCycleForPlatform(platformId);
     } catch (e) {
-      try { await log(platformId, 'ERROR', 'Cycle exception: ' + ((e && e.message) || String(e))); } catch (_) {}
+      result = { error: (e && e.message) || String(e) };
+      try { await log(platformId, 'ERROR', 'Cycle exception: ' + result.error); } catch (_) {}
     }
-    // Si aucune demande n'a ete trouvee/rejetee dans ce cycle,
-    // attendre 5 minutes avant de reessayer (au lieu de 30s).
+    // Calcul du delai en fonction du resultat:
+    // - Saturation systeme (Cannot fork, OOM, etc.) -> 5 min + GC pour laisser respirer
+    // - Aucune demande trouvee -> 5 min
+    // - Sinon (rejets faits ou autre erreur) -> 30 s
+    const resourceErr = result && result.error && isResourceError(result.error);
     const noDemandFound = result && typeof result.rejected === 'number' && result.rejected === 0;
-    const delayMs = noDemandFound ? 5 * 60 * 1000 : 30 * 1000;
-    if (noDemandFound) {
+    let delayMs;
+    if (resourceErr) {
+      delayMs = 5 * 60 * 1000;
+      try { await log(platformId, 'WARN', 'Saturation systeme detectee, pause 5 min + GC.'); } catch (_) {}
+      try { if (global.gc) global.gc(); } catch (_) {}
+    } else if (noDemandFound) {
+      delayMs = 5 * 60 * 1000;
       try { await log(platformId, 'INFO', 'Aucune demande a rejeter, nouvelle verification dans 5 min.'); } catch (_) {}
+    } else {
+      delayMs = 30 * 1000;
     }
     try { await new Promise(r => setTimeout(r, delayMs)); } catch (_) {}
   }
