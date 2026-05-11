@@ -78,6 +78,7 @@ async function runOneCycleForUser(userId) {
 
   const s = (await query('SELECT cookies_json, threshold_minutes, robot_active FROM user_settings WHERE user_id = $1', [userId])).rows[0];
   if (!s || !s.robot_active) return { stopped: true };
+  // Seuil personnalise par utilisateur (defaut 120 min = 2h)
   const threshold = s.threshold_minutes || 120;
   const cookies = parseCookies(s.cookies_json);
   if (!cookies.length) { await log(userId, 'WARN', 'Aucun cookie.'); return { error: 'no cookies' }; }
@@ -207,12 +208,16 @@ async function runOneCycleForUser(userId) {
       });
       if (!allRows.length) { await log(userId, 'INFO', 'Table vide.'); break; }
 
-      const eligible = allRows.filter(r => processingTimeToMinutes(r.processingTime) > threshold);
+      // Tri explicite: du plus ancien (plus grande duree d'attente) au plus recent
+      const eligible = allRows
+        .filter(r => processingTimeToMinutes(r.processingTime) > threshold)
+        .sort((a, b) => processingTimeToMinutes(b.processingTime) - processingTimeToMinutes(a.processingTime));
       if (!eligible.length) {
         await log(userId, 'INFO', 'Plus aucune > ' + threshold + ' min (' + allRows.length + ' rangees vues).');
         break;
       }
-      const target = eligible[eligible.length - 1];
+      // Toujours commencer par la plus ancienne demande
+      const target = eligible[0];
       const targetIndex = allRows.indexOf(target);
 
       if (i === 0) await log(userId, 'INFO', 'Demandes a rejeter: ' + eligible.length + ' / ' + allRows.length);
@@ -236,8 +241,8 @@ async function runOneCycleForUser(userId) {
           return m ? m[1] : '';
         });
 
-        // Remplir "AA" via Playwright (tous les events)
-        await page.fill('input[placeholder="Commentaire"]', 'AA');
+        // Remplir le commentaire de rejet via Playwright (tous les events)
+        await page.fill('input[placeholder="Commentaire"]', "Nous n'avons pas reçu ce paiement");
         await page.waitForTimeout(200);
 
         // Cliquer OK (bouton turquoise) via Playwright
