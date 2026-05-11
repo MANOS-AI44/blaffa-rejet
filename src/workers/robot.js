@@ -1,4 +1,4 @@
-// Robot de rejet v4 - mutex global Chromium + retry EAGAIN
+// Robot de rejet v5 - architecture par plateformes (1 admin, N plateformes managment.io)
 const { query } = require('../db');
 
 const BASE_URL = process.env.MANAGMENT_BASE_URL || 'https://managment.io';
@@ -38,11 +38,11 @@ async function launchChromiumWithRetry(chromium, opts, maxRetries = 3) {
   }
 }
 
-async function log(userId, level, message) {
-  console.log('[' + level + '][user:' + userId + '] ' + message);
+async function log(platformId, level, message) {
+  console.log('[' + level + '][platform:' + platformId + '] ' + message);
   try {
-    await query('INSERT INTO robot_logs (user_id, level, message) VALUES ($1, $2, $3)', [userId, level, message.substring(0, 2000)]);
-    await query('DELETE FROM robot_logs WHERE id IN (SELECT id FROM robot_logs WHERE user_id = $1 ORDER BY created_at DESC OFFSET 200)', [userId]);
+    await query('INSERT INTO robot_logs (platform_id, level, message) VALUES ($1, $2, $3)', [platformId, level, message.substring(0, 2000)]);
+    await query('DELETE FROM robot_logs WHERE id IN (SELECT id FROM robot_logs WHERE platform_id = $1 ORDER BY created_at DESC OFFSET 200)', [platformId]);
   } catch (e) {}
 }
 
@@ -71,19 +71,19 @@ function processingTimeToMinutes(pt) {
   return m;
 }
 
-async function runOneCycleForUser(userId) {
+async function runOneCycleForPlatform(platformId) {
   let chromium;
   try { chromium = require('playwright').chromium; }
-  catch (e) { await log(userId, 'ERROR', 'Playwright: ' + e.message); return { error: 'no playwright' }; }
+  catch (e) { await log(platformId, 'ERROR', 'Playwright: ' + e.message); return { error: 'no playwright' }; }
 
-  const s = (await query('SELECT cookies_json, threshold_minutes, robot_active FROM user_settings WHERE user_id = $1', [userId])).rows[0];
+  const s = (await query('SELECT cookies_json, threshold_minutes, robot_active FROM platforms WHERE id = $1', [platformId])).rows[0];
   if (!s || !s.robot_active) return { stopped: true };
-  // Seuil personnalise par utilisateur (defaut 120 min = 2h)
+  // Seuil personnalise par plateforme (defaut 120 min = 2h)
   const threshold = s.threshold_minutes || 120;
   const cookies = parseCookies(s.cookies_json);
-  if (!cookies.length) { await log(userId, 'WARN', 'Aucun cookie.'); return { error: 'no cookies' }; }
+  if (!cookies.length) { await log(platformId, 'WARN', 'Aucun cookie.'); return { error: 'no cookies' }; }
 
-  await log(userId, 'INFO', 'Debut cycle (seuil=' + threshold + ' min)');
+  await log(platformId, 'INFO', 'Debut cycle (seuil=' + threshold + ' min)');
   let browser = null, rejectedCount = 0;
   let chromiumAcquired = false;
   try {
@@ -102,8 +102,8 @@ async function runOneCycleForUser(userId) {
 
     const isLogin = await page.locator('input[type="password"]').first().isVisible().catch(() => false);
     if (isLogin) {
-      await log(userId, 'ERROR', 'Cookies invalides.');
-      await query('UPDATE user_settings SET last_status = $1, last_run_at = NOW() WHERE user_id = $2', ['ERROR_AUTH', userId]);
+      await log(platformId, 'ERROR', 'Cookies invalides.');
+      await query('UPDATE platforms SET last_status = $1, last_run_at = NOW() WHERE id = $2', ['ERROR_AUTH', platformId]);
       return { error: 'auth' };
     }
 
@@ -133,7 +133,7 @@ async function runOneCycleForUser(userId) {
       }
       return null;
     });
-    if (toggled) await log(userId, 'INFO', 'Auto-update desactive (' + toggled + ')');
+    if (toggled) await log(platformId, 'INFO', 'Auto-update desactive (' + toggled + ')');
     await page.waitForTimeout(500);
 
     // 2. Click APPLIQUER
@@ -153,7 +153,7 @@ async function runOneCycleForUser(userId) {
         if (opts.includes('500')) {
           await selects.nth(i).selectOption('500');
           pageSizeChanged = true;
-          await log(userId, 'INFO', 'Page-size 500 (select natif)');
+          await log(platformId, 'INFO', 'Page-size 500 (select natif)');
         }
       }
     } catch (e) {}
@@ -175,7 +175,7 @@ async function runOneCycleForUser(userId) {
             if (els.length) { els[els.length - 1].click(); return true; }
             return false;
           });
-          if (picked) { pageSizeChanged = true; await log(userId, 'INFO', 'Page-size 500 (dropdown)'); }
+          if (picked) { pageSizeChanged = true; await log(platformId, 'INFO', 'Page-size 500 (dropdown)'); }
         }
       } catch (e) {}
     }
@@ -185,7 +185,7 @@ async function runOneCycleForUser(userId) {
       await page.waitForTimeout(3500);
     }
 
-    // 4. Rejection loop - utilise des CLICS PLAYWRIGHT (vraie souris) au lieu de JS click()
+    // 4. Rejection loop - utilise des CLICS PLAYWRIGHT (vraie souris)
     const MAX = 500;
     let consecutiveFailures = 0;
     for (let i = 0; i < MAX; i++) {
@@ -206,21 +206,21 @@ async function runOneCycleForUser(userId) {
           };
         }).filter(x => x);
       });
-      if (!allRows.length) { await log(userId, 'INFO', 'Table vide.'); break; }
+      if (!allRows.length) { await log(platformId, 'INFO', 'Table vide.'); break; }
 
       // Tri explicite: du plus ancien (plus grande duree d'attente) au plus recent
       const eligible = allRows
         .filter(r => processingTimeToMinutes(r.processingTime) > threshold)
         .sort((a, b) => processingTimeToMinutes(b.processingTime) - processingTimeToMinutes(a.processingTime));
       if (!eligible.length) {
-        await log(userId, 'INFO', 'Plus aucune > ' + threshold + ' min (' + allRows.length + ' rangees vues).');
+        await log(platformId, 'INFO', 'Plus aucune > ' + threshold + ' min (' + allRows.length + ' rangees vues).');
         break;
       }
       // Toujours commencer par la plus ancienne demande
       const target = eligible[0];
       const targetIndex = allRows.indexOf(target);
 
-      if (i === 0) await log(userId, 'INFO', 'Demandes a rejeter: ' + eligible.length + ' / ' + allRows.length);
+      if (i === 0) await log(platformId, 'INFO', 'Demandes a rejeter: ' + eligible.length + ' / ' + allRows.length);
 
       const phoneMatch = target.infos.match(/(\d{8,15})/);
       const userPhone = phoneMatch ? phoneMatch[1] : '';
@@ -265,7 +265,7 @@ async function runOneCycleForUser(userId) {
           await page.keyboard.press('Escape').catch(() => {});
           await page.waitForTimeout(800);
           consecutiveFailures++;
-          if (consecutiveFailures > 3) { await log(userId, 'ERROR', 'Bouton OK introuvable (3x)'); break; }
+          if (consecutiveFailures > 3) { await log(platformId, 'ERROR', 'Bouton OK introuvable (3x)'); break; }
           continue;
         }
 
@@ -274,26 +274,26 @@ async function runOneCycleForUser(userId) {
 
         consecutiveFailures = 0;
         try {
-          await query('INSERT INTO rejections (user_id, request_number, deposit_id, user_phone, user_identifier, amount, bank_name, processing_time, threshold_used, success) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE)',
-            [userId, requestNumber, target.identifier, userPhone, target.identifier, target.amount, target.bankName, target.processingTime, threshold]);
+          await query('INSERT INTO rejections (platform_id, request_number, deposit_id, user_phone, user_identifier, amount, bank_name, processing_time, threshold_used, success) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE)',
+            [platformId, requestNumber, target.identifier, userPhone, target.identifier, target.amount, target.bankName, target.processingTime, threshold]);
         } catch (e) {}
         rejectedCount++;
-        if (rejectedCount === 1 || rejectedCount % 5 === 0) await log(userId, 'INFO', 'Rejete ' + rejectedCount + ' (N ' + requestNumber + ')');
+        if (rejectedCount === 1 || rejectedCount % 5 === 0) await log(platformId, 'INFO', 'Rejete ' + rejectedCount + ' (N ' + requestNumber + ')');
       } catch (clickErr) {
         consecutiveFailures++;
-        await log(userId, 'WARN', 'Echec idx=' + targetIndex + ': ' + (clickErr.message || '').substring(0, 100));
+        await log(platformId, 'WARN', 'Echec idx=' + targetIndex + ': ' + (clickErr.message || '').substring(0, 100));
         await page.keyboard.press('Escape').catch(() => {});
         await page.waitForTimeout(800);
-        if (consecutiveFailures > 5) { await log(userId, 'ERROR', 'Trop d echecs consecutifs, arret du cycle.'); break; }
+        if (consecutiveFailures > 5) { await log(platformId, 'ERROR', 'Trop d echecs consecutifs, arret du cycle.'); break; }
       }
     }
 
-    await query('UPDATE user_settings SET last_status = $1, last_run_at = NOW() WHERE user_id = $2', ['OK: ' + rejectedCount + ' rejet(s)', userId]);
-    await log(userId, 'INFO', 'Cycle termine: ' + rejectedCount + ' rejets.');
+    await query('UPDATE platforms SET last_status = $1, last_run_at = NOW() WHERE id = $2', ['OK: ' + rejectedCount + ' rejet(s)', platformId]);
+    await log(platformId, 'INFO', 'Cycle termine: ' + rejectedCount + ' rejets.');
     return { rejected: rejectedCount };
   } catch (err) {
-    await log(userId, 'ERROR', 'Erreur: ' + err.message);
-    await query('UPDATE user_settings SET last_status = $1, last_run_at = NOW() WHERE user_id = $2', ['ERROR: ' + err.message.substring(0, 200), userId]);
+    await log(platformId, 'ERROR', 'Erreur: ' + err.message);
+    await query('UPDATE platforms SET last_status = $1, last_run_at = NOW() WHERE id = $2', ['ERROR: ' + err.message.substring(0, 200), platformId]);
     return { error: err.message };
   } finally {
     if (browser) { try { await browser.close(); } catch (e) {} }
@@ -301,46 +301,51 @@ async function runOneCycleForUser(userId) {
   }
 }
 
-async function userLoop(userId) {
-  while (runners.has(userId) && runners.get(userId).active) {
+async function platformLoop(platformId) {
+  // Boucle ultra-resiliente: aucune exception ne peut sortir et tuer le runner silencieusement.
+  while (runners.has(platformId) && runners.get(platformId).active) {
     let result;
-    try { result = await runOneCycleForUser(userId); } catch (e) { await log(userId, 'ERROR', e.message); }
+    try {
+      result = await runOneCycleForPlatform(platformId);
+    } catch (e) {
+      try { await log(platformId, 'ERROR', 'Cycle exception: ' + ((e && e.message) || String(e))); } catch (_) {}
+    }
     // Si aucune demande n'a ete trouvee/rejetee dans ce cycle,
     // attendre 5 minutes avant de reessayer (au lieu de 30s).
     const noDemandFound = result && typeof result.rejected === 'number' && result.rejected === 0;
     const delayMs = noDemandFound ? 5 * 60 * 1000 : 30 * 1000;
     if (noDemandFound) {
-      await log(userId, 'INFO', 'Aucune demande a rejeter, nouvelle verification dans 5 min.');
+      try { await log(platformId, 'INFO', 'Aucune demande a rejeter, nouvelle verification dans 5 min.'); } catch (_) {}
     }
-    await new Promise(r => setTimeout(r, delayMs));
+    try { await new Promise(r => setTimeout(r, delayMs)); } catch (_) {}
   }
-  runners.delete(userId);
+  runners.delete(platformId);
 }
 
-function startRobotForUser(userId) {
-  if (runners.has(userId) && runners.get(userId).active) return;
-  runners.set(userId, { active: true });
-  log(userId, 'INFO', 'Robot demarre.');
-  userLoop(userId).catch(() => runners.delete(userId));
+function startRobotForPlatform(platformId) {
+  if (runners.has(platformId) && runners.get(platformId).active) return;
+  runners.set(platformId, { active: true });
+  log(platformId, 'INFO', 'Robot demarre.');
+  platformLoop(platformId).catch(() => runners.delete(platformId));
 }
 
-function stopRobotForUser(userId) {
-  if (runners.has(userId)) { runners.get(userId).active = false; log(userId, 'INFO', 'Robot arrete.'); }
+function stopRobotForPlatform(platformId) {
+  if (runners.has(platformId)) { runners.get(platformId).active = false; log(platformId, 'INFO', 'Robot arrete.'); }
 }
 
-function isRobotRunning(userId) { return runners.has(userId) && runners.get(userId).active; }
+function isRobotRunning(platformId) { return runners.has(platformId) && runners.get(platformId).active; }
 
 async function bootstrap() {
-  console.log('Bootstrap des robots actifs...');
+  console.log('Bootstrap des plateformes actives...');
   try {
-    const r = await query('SELECT us.user_id FROM user_settings us JOIN users u ON u.id = us.user_id WHERE us.robot_active = TRUE AND u.is_active = TRUE');
+    const r = await query('SELECT id FROM platforms WHERE robot_active = TRUE');
     // Espacer les demarrages de 5s pour ne pas saturer Chromium
     for (let i = 0; i < r.rows.length; i++) {
       const row = r.rows[i];
-      setTimeout(() => startRobotForUser(row.user_id), i * 5000);
+      setTimeout(() => startRobotForPlatform(row.id), i * 5000);
     }
-    console.log(r.rows.length + ' robot(s) seront relance(s) (5s d\'intervalle).');
+    console.log(r.rows.length + ' plateforme(s) seront relancee(s) (5s d\'intervalle).');
   } catch (e) { console.error('Bootstrap:', e.message); }
 }
 
-module.exports = { startRobotForUser, stopRobotForUser, isRobotRunning, bootstrap };
+module.exports = { startRobotForPlatform, stopRobotForPlatform, isRobotRunning, bootstrap };
