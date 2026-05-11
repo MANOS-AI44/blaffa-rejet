@@ -217,4 +217,40 @@ router.get('/stats', async (req, res) => {
   });
 });
 
+// ==================== MAINTENANCE ====================
+
+// POST /api/admin/restart - redemarre le processus Node (Railway le relancera automatiquement)
+// Utile en cas de saturation systeme (Chromium "Cannot fork", memoire pleine, etc.)
+router.post('/restart', async (req, res) => {
+  res.json({
+    success: true,
+    message: 'Redemarrage en cours. Le serveur sera de retour dans 30 a 60 secondes.'
+  });
+  // Petit delai pour laisser la reponse partir au client, puis on tue le processus.
+  // Railway redemarrera automatiquement le container et bootstrap() relancera les plateformes actives.
+  setTimeout(() => {
+    console.log('=== RESTART MANUEL DEMANDE PAR ADMIN ===');
+    process.exit(0);
+  }, 1500);
+});
+
+// POST /api/admin/restart-platforms - redemarre uniquement les runners en memoire (soft)
+// Sans tuer le processus Node - utile pour repartir sur des sessions Chromium fraiches.
+router.post('/restart-platforms', async (req, res) => {
+  try {
+    const r = await query('SELECT id FROM platforms WHERE robot_active = TRUE');
+    const ids = r.rows.map(x => x.id);
+    // Stop tous
+    for (const id of ids) stopRobotForPlatform(id);
+    // Restart espace de 3s
+    setTimeout(() => {
+      ids.forEach((id, i) => setTimeout(() => startRobotForPlatform(id), i * 3000));
+    }, 2000);
+    res.json({ success: true, count: ids.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 module.exports = router;
