@@ -190,19 +190,49 @@ async function runOneCycleForPlatform(platformId) {
     let consecutiveFailures = 0;
     for (let i = 0; i < MAX; i++) {
       const allRows = await page.evaluate(() => {
-        const r = document.querySelectorAll('table tbody tr');
-        if (!r.length) return [];
-        return Array.from(r).map(row => {
+        const table = document.querySelector('table');
+        if (!table) return [];
+        // Trouver les colonnes dynamiquement via les en-tetes (robuste aux changements de mise en page)
+        const headers = Array.from(table.querySelectorAll('thead th, thead td'))
+          .map(th => (th.innerText || '').trim().toLowerCase());
+        const findCol = (...keywords) => {
+          for (let i = 0; i < headers.length; i++) {
+            if (keywords.every(kw => headers[i].includes(kw.toLowerCase()))) return i;
+          }
+          return -1;
+        };
+        let colTime = findCol('processing');
+        if (colTime < 0) colTime = findCol('time');
+        let colInfos = findCol('infos');
+        if (colInfos < 0) colInfos = findCol('utilisateur'); // fallback
+        let colAmount = findCol('montant');
+        let colIdentifier = findCol('identifiant', 'utilisateur');
+        let colFournisseur = findCol('fournisseur');
+        if (colFournisseur < 0) colFournisseur = findCol('partenaire');
+
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        return rows.map(row => {
           const c = row.querySelectorAll('td');
-          if (c.length < 5) return null;
+          if (c.length < 3) return null;
           const hasReject = !!Array.from(row.querySelectorAll('a')).find(a => (a.textContent || '').trim() === 'Rejeter');
           if (!hasReject) return null;
+
+          const cells = Array.from(c).map(td => (td.innerText || '').trim());
+          const get = i => (i >= 0 && i < cells.length) ? cells[i] : '';
+
+          // Si on n'a pas trouve la colonne time via header, on cherche dans les cellules
+          let processingTime = get(colTime);
+          if (!processingTime || !/\d+\s*(heure|jour|minute|less than|moins)/i.test(processingTime)) {
+            for (const text of cells) {
+              if (/\d+\s*(heure|jour|minute|less than|moins)/i.test(text)) { processingTime = text; break; }
+            }
+          }
           return {
-            infos: (c.item(0) ? c.item(0).innerText : '').trim(),
-            amount: (c.item(1) ? c.item(1).innerText : '').trim(),
-            processingTime: (c.item(3) ? c.item(3).innerText : '').trim(),
-            identifier: c.item(5) ? c.item(5).innerText.trim() : '',
-            bankName: c.item(7) ? c.item(7).innerText.trim() : '',
+            infos: get(colInfos),
+            amount: get(colAmount),
+            processingTime: processingTime,
+            identifier: get(colIdentifier),
+            bankName: get(colFournisseur),
           };
         }).filter(x => x);
       });
